@@ -6,6 +6,8 @@ st.set_page_config(page_title="Simple Calculator", page_icon="🧮", layout="cen
 
 st.title("🧮 Simple Calculator")
 
+openai_api_key = st.secrets["OPENAI_API_KEY"]
+
 st.markdown("Enter two numbers, then click **Compute** to see the arithmetic results.")
 
 # Input fields
@@ -18,9 +20,9 @@ with col2:
 # Compute button
 if st.button("Compute"):
     st.subheader("Results")
-    st.write(f"{a} + {b} = {utils.add(a, b)}")
-    st.write(f"{a} - {b} = {utils.subtract(a, b)}")
-    st.write(f"{a} × {b} = {utils.multiply(a, b)}")
+    st.write(f"{a} + {b} = {utils.add(a, b, openai_api_key)}")
+    st.write(f"{a} - {b} = {utils.subtract(a, b, openai_api_key)}")
+    st.write(f"{a} × {b} = {utils.multiply(a, b, openai_api_key)}")
 
     # Handle division by zero gracefully
     if b == 0:
