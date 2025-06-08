@@ -1,31 +1,24 @@
 import streamlit as st
 import utils
+import openai
 
 # Page configuration
-st.set_page_config(page_title="Simple Calculator", page_icon="🧮", layout="centered")
+st.set_page_config(page_title="tagline generator", page_icon="🧮", layout="centered")
 
-st.title("🧮 Simple Calculator")
+st.title("🧮 tagline generator")
 
-openai_api_key = st.secrets["OPENAI_API_KEY"]
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-st.markdown("Enter two numbers, then click **Compute** to see the arithmetic results.")
+business_info = utils.get_business_info()
 
-# Input fields
-col1, col2 = st.columns(2)
-with col1:
-    a = st.number_input("First number", value=0, step=1, format="%d", key="num_a")
-with col2:
-    b = st.number_input("Second number", value=0, step=1, format="%d", key="num_b")
-
-# Compute button
-if st.button("Compute"):
-    st.subheader("Results")
-    st.write(f"{a} + {b} = {utils.add(a, b, openai_api_key)}")
-    st.write(f"{a} - {b} = {utils.subtract(a, b, openai_api_key)}")
-    st.write(f"{a} × {b} = {utils.multiply(a, b, openai_api_key)}")
-
-    # Handle division by zero gracefully
-    if b == 0:
-        st.error("Cannot divide by zero.")
+if st.button("Submit"):
+    if business_info:
+        st.subheader("Tagline")
+        tagline = utils.generate_tagline(business_info)
+        st.write(tagline)
+        st.subheader("Business Info")
+        st.write(business_info)
     else:
-        st.write(f"{a} ÷ {b} = {utils.divide(a, b)}")
+        st.info("No business information provided yet.")
+
+
