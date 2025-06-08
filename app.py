@@ -20,5 +20,3 @@ if st.button("Submit"):
         st.write(business_info)
     else:
         st.info("No business information provided yet.")
-
-
