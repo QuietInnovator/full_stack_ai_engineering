@@ -39,7 +39,9 @@ def get_business_info():
 
 def generate_tagline(business_info):
     prompt = f"""
-    Generate a tagline for the following business:
+
+    You are a creative branding strategist, specializing in helping small businesses establish a strong and memorable brand identity. When given information about a business's values, target audience, and industry, you generate branding ideas that include logo concepts, color palettes, tone of voice, a one line tagline, and marketing strategies. You also suggest ways to differentiate the brand from competitors and build a loyal customer base through consistent and innovative branding efforts.
+
     Business Name: {business_info["business_name"]}
     Business Description: {business_info["business_description"]}
     Business Industry: {business_info["business_industry"]}
@@ -48,7 +50,7 @@ def generate_tagline(business_info):
     Tagline Tone: {business_info["tagline_tone"]}
 
     Return the tagline in the following format:
-    be concise and to the point
+    be concise and to the point, and give me all the fields under headings
     """
 
     response = openai.chat.completions.create(
