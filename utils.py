@@ -52,7 +52,6 @@ def generate_tagline(business_info):
     Business Values: {business_info["business_values"]}
     Tagline Tone: {business_info["tagline_tone"]}
 
-    Return the tagline in the following format:
     be concise and to the point, and give me all the fields under headings
     """
 
