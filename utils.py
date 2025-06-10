@@ -5,6 +5,7 @@
 # This will get us ready for the whole app
 import openai
 import streamlit as st
+import re
 
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
@@ -60,3 +61,37 @@ def generate_tagline(business_info):
         messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content
+
+def seperating_answer(text):
+    # Split by ### and filter empty sections
+    sections = [section.strip() for section in text.split('###') if section.strip()]
+
+    # Convert to dictionary with lists
+    result = {}
+    for section in sections:
+        lines = section.split('\n', 1)
+        title = lines[0].strip()
+        content = lines[1].strip() if len(lines) > 1 else ""
+        
+        # Convert bullet points to list
+        if content.startswith('-'):
+            # Split by lines starting with -
+            bullet_items = re.findall(r'^- (.+)$', content, re.MULTILINE)
+            result[title] = bullet_items
+        else:
+            result[title] = content
+
+    return result
+
+def display_recommendations(recommendations):
+    st.title("Tips and Recommendations")
+    st.write(recommendations.items())
+
+    for category, items in recommendations.items():
+        with st.container():
+            st.subheader(category)
+            
+            for item in items:
+                st.markdown(f"• {item}")
+            
+            st.divider()
