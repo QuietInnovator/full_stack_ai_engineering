@@ -3,3 +3,6 @@
 - show competitor analysis
 - add interface tabs: import business - competitor analysis - recommendations report 
 - generate an image of the logo
+- generate pdf
+- email PDF
+- Use tavily company research
