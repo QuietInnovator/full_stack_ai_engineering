@@ -5,4 +5,4 @@
 - generate an image of the logo
 - generate pdf
 - email PDF
-- Use tavily company research
+- Use tavily company research for market analysnis
