@@ -2,3 +2,4 @@
 - search competitors and competitor analysis
 - show competitor analysis
 - add interface tabs: import business - competitor analysis - recommendations report 
+- generate an image of the logo
