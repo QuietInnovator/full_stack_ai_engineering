@@ -1,2 +1,7 @@
 streamlit
 openai
+requests
+beautifulsoup4
+tavily-python
+Pillow
+reportlab
