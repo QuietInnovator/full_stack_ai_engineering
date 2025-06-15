@@ -1,0 +1,20 @@
+There Will be three tabs:
+Import business, Competitor analysis, and Logo generation.
+
+When on the first tab, important business:
+The user will have the choice between two buttons:
+1. Import business from a website
+2. Import business Manually
+
+If the user chooses to import business Manually, the user will be asked to enter the business name, industry, Business values, Business target audience, Business description, Business setting point.
+
+If the user chooses to import business from a website, the user will be asked to enter the website URL. The website URL will be used to scrape the website and extract the business information.
+
+The application will also generate a logo for a business using dall-e.
+
+Went on the second tab, Competitor analysis:
+The user will See the business name and industry that it was important in the first stop
+
+the user will have the ability to search for competitors, both in the industry and by the name of the business.
+
+The Third job recommendations report will give the user a list of recommendations based on the information gathered throughout this exercise
