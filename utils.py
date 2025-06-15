@@ -1,24 +1,56 @@
-import openai
 import streamlit as st
-import re
 import requests
 from bs4 import BeautifulSoup
+from langchain_openai import ChatOpenAI
+from langchain.schema import HumanMessage
 from tavily import TavilyClient
-from urllib.parse import urljoin, urlparse
+import re
 
 # Initialize API clients
 def initialize_apis():
     """Initialize all API clients"""
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        api_key=st.secrets["OPENAI_API_KEY"],
+        temperature=0.7
+    )
     tavily_client = TavilyClient(api_key=st.secrets.get("TAVILY_API_KEY", ""))
-    return tavily_client
+    return llm, tavily_client
 
 # =============================================================================
-# WEBSITE SCRAPING AND BUSINESS EXTRACTION
+# SESSION STATE MANAGEMENT
+# =============================================================================
+
+def initialize_session_state():
+    """Initialize all session state variables"""
+    if 'business_data' not in st.session_state:
+        st.session_state.business_data = {
+            'business_name': '',
+            'business_description': '',
+            'business_website': '',
+            'business_industry': ''
+        }
+    if 'recommendations' not in st.session_state:
+        st.session_state.recommendations = []
+    if 'applied_recommendations' not in st.session_state:
+        st.session_state.applied_recommendations = {
+            'tone_of_voice': '',
+            'tagline': '',
+            'logo_style': '',
+            'color_scheme': '',
+            'font': ''
+        }
+    if 'logo_url' not in st.session_state:
+        st.session_state.logo_url = None
+    if 'competitors' not in st.session_state:
+        st.session_state.competitors = []
+
+# =============================================================================
+# BUSINESS INFORMATION EXTRACTION
 # =============================================================================
 
 def scrape_website_content(url):
-    """Scrape and extract business information from website"""
+    """Scrape website content"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -38,427 +70,315 @@ def scrape_website_content(url):
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         clean_text = ' '.join(chunk for chunk in chunks if chunk)
         
-        # Limit content and clean up
-        content = clean_text[:8000]  # Limit to 8000 characters
-        
+        # Limit content
+        content = clean_text[:8000]
         return content
     except Exception as e:
         st.error(f"Error scraping website: {str(e)}")
         return None
 
-def extract_business_info_from_content(website_content, url):
-    """Use AI to extract business information from website content"""
+def extract_business_info_from_website(website_content, url, llm):
+    """Extract business information from website using LangChain"""
     prompt = f"""
-    Analyze the following website content and extract key business information. 
+    Analyze the following website content and extract key business information.
     Website URL: {url}
     
     Website Content:
     {website_content}
     
-    Please extract and provide the following information in a structured format:
+    Please extract and provide ONLY the following information in this exact format:
     
-    1. Business Name
-    2. Industry
-    3. Business Values (what the company stands for)
-    4. Business Target Audience (who they serve)
-    5. Business Description (what they do)
-    6. Business Unique Selling Point (what makes them special)
-    
-    Format your response as:
     Business Name: [extracted name]
-    Industry: [extracted industry]
-    Business Values: [extracted values]
-    Business Target Audience: [extracted target audience]
-    Business Description: [extracted description]
-    Business Unique Selling Point: [extracted unique selling point]
+    Business Description: [brief description of what they do]
+    Business Industry: [industry/sector]
     
-    If any information is not clearly available, write "Not clearly specified on website" for that field.
+    If any information is not clearly available, write "Not specified" for that field.
+    Keep descriptions concise and factual.
     """
     
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=1000
-        )
+        message = HumanMessage(content=prompt)
+        response = llm([message])
+        extracted_info = response.content
         
-        extracted_info = response.choices[0].message.content
+        # Parse the response
+        business_info = {
+            'business_name': '',
+            'business_description': '',
+            'business_website': url,
+            'business_industry': ''
+        }
         
-        # Parse the response into a dictionary
-        business_info = {}
         lines = extracted_info.split('\n')
-        
         for line in lines:
             if ':' in line:
                 key, value = line.split(':', 1)
-                key = key.strip().lower().replace(' ', '_')
+                key = key.strip().lower()
                 value = value.strip()
                 
-                if key == 'business_name':
+                if 'business name' in key:
                     business_info['business_name'] = value
-                elif key == 'industry':
-                    business_info['business_industry'] = value
-                elif key == 'business_values':
-                    business_info['business_values'] = value
-                elif key == 'business_target_audience':
-                    business_info['business_target_audience'] = value
-                elif key == 'business_description':
+                elif 'business description' in key:
                     business_info['business_description'] = value
-                elif key == 'business_unique_selling_point':
-                    business_info['business_unique_selling_point'] = value
+                elif 'business industry' in key:
+                    business_info['business_industry'] = value
         
         return business_info
         
     except Exception as e:
         st.error(f"Error extracting business information: {str(e)}")
-        return {}
+        return None
 
 # =============================================================================
-# COMPETITOR ANALYSIS
+# RECOMMENDATIONS GENERATION
 # =============================================================================
 
-def search_competitors(business_name, industry, tavily_client):
-    """Search for competitors using Tavily"""
-    try:
-        # Search by industry
-        industry_query = f"companies in {industry} industry"
-        industry_results = tavily_client.search(industry_query, max_results=3)
-        
-        # Search by business name
-        business_query = f"competitors of {business_name}"
-        business_results = tavily_client.search(business_query, max_results=3)
-        
-        competitors = []
-        
-        # Process industry results
-        for result in industry_results.get('results', []):
-            competitors.append({
-                'name': result.get('title', 'Unknown'),
-                'url': result.get('url', ''),
-                'description': result.get('content', '')[:300],
-                'search_type': 'Industry Search'
-            })
-        
-        # Process business-specific results
-        for result in business_results.get('results', []):
-            competitors.append({
-                'name': result.get('title', 'Unknown'),
-                'url': result.get('url', ''),
-                'description': result.get('content', '')[:300],
-                'search_type': 'Competitor Search'
-            })
-        
-        return competitors
-    except Exception as e:
-        st.error(f"Error searching competitors: {str(e)}")
-        return []
-
-def generate_recommendations(business_data, competitor_data):
-    """Generate business recommendations based on collected data"""
+def generate_recommendations(business_data, llm):
+    """Generate branding recommendations based on business information"""
     prompt = f"""
-    Based on the following business information and competitor analysis, provide strategic recommendations:
+    Based on the following business information, generate 5 specific branding recommendations:
     
-    Business Information:
-    - Name: {business_data.get('business_name', 'N/A')}
-    - Industry: {business_data.get('business_industry', 'N/A')}
-    - Description: {business_data.get('business_description', 'N/A')}
-    - Values: {business_data.get('business_values', 'N/A')}
-    - Target Audience: {business_data.get('business_target_audience', 'N/A')}
-    - Unique Selling Point: {business_data.get('business_unique_selling_point', 'N/A')}
+    Business Name: {business_data.get('business_name', 'N/A')}
+    Business Description: {business_data.get('business_description', 'N/A')}
+    Business Industry: {business_data.get('business_industry', 'N/A')}
+    Business Website: {business_data.get('business_website', 'N/A')}
     
-    Competitor Information:
-    {competitor_data[:1000] if competitor_data else 'No competitor data available'}
+    Provide exactly 5 recommendations in this format:
     
-    Please provide recommendations in the following categories:
+    1. Tone of Voice|[specific tone recommendation]|[brief explanation why this tone fits]
+    2. Tagline|[catchy tagline]|[explanation of tagline strategy]
+    3. Logo Style|[logo style recommendation]|[why this style works for the business]
+    4. Color Scheme|[specific colors with hex codes]|[psychology behind color choices]
+    5. Font|[specific font recommendation]|[why this font fits the brand]
     
-    ### Marketing Strategy
-    - [3-4 specific marketing recommendations]
-    
-    ### Competitive Positioning
-    - [3-4 recommendations for standing out from competitors]
-    
-    ### Business Development
-    - [3-4 recommendations for growth and improvement]
-    
-    ### Brand Enhancement
-    - [3-4 recommendations for strengthening brand identity]
-    
-    ### Digital Presence
-    - [3-4 recommendations for online presence and digital marketing]
-    
-    Make each recommendation specific, actionable, and tailored to this business.
+    Each recommendation should be specific, actionable, and tailored to this business.
     """
     
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=1500
-        )
+        message = HumanMessage(content=prompt)
+        response = llm([message])
+        recommendations_text = response.content
         
-        return response.choices[0].message.content
+        # Parse recommendations
+        recommendations = []
+        lines = recommendations_text.split('\n')
+        
+        for line in lines:
+            if '|' in line and any(char.isdigit() for char in line[:3]):
+                parts = line.split('|')
+                if len(parts) >= 3:
+                    # Remove number prefix
+                    recommendation_type = parts[0].split('.', 1)[-1].strip()
+                    recommendation = parts[1].strip()
+                    description = parts[2].strip()
+                    
+                    recommendations.append({
+                        'type': recommendation_type,
+                        'recommendation': recommendation,
+                        'description': description
+                    })
+        
+        return recommendations
+        
     except Exception as e:
         st.error(f"Error generating recommendations: {str(e)}")
-        return "Unable to generate recommendations at this time."
+        return []
+
+def apply_recommendation(rec_type, recommendation):
+    """Apply a recommendation to the business data"""
+    type_mapping = {
+        'Tone of Voice': 'tone_of_voice',
+        'Tagline': 'tagline',
+        'Logo Style': 'logo_style',
+        'Color Scheme': 'color_scheme',
+        'Font': 'font'
+    }
+    
+    if rec_type in type_mapping:
+        st.session_state.applied_recommendations[type_mapping[rec_type]] = recommendation
+        st.success(f"Applied {rec_type}: {recommendation}")
+    else:
+        st.error("Unknown recommendation type")
 
 # =============================================================================
 # LOGO GENERATION
 # =============================================================================
 
-def generate_logo(business_info, recommendations=None):
-    """Generate logo using DALL-E with enhanced prompt based on recommendations"""
+def generate_logo_with_dalle(business_data, applied_recommendations, llm):
+    """Generate logo using DALL-E based on business info and recommendations"""
     try:
-        business_name = business_info.get('business_name', 'Company')
-        industry = business_info.get('business_industry', 'business')
-        values = business_info.get('business_values', '')
-        description = business_info.get('business_description', '')
-        unique_selling_point = business_info.get('business_unique_selling_point', '')
+        # Create prompt based on business info and applied recommendations
+        business_name = business_data.get('business_name', 'Company')
+        industry = business_data.get('business_industry', 'business')
+        description = business_data.get('business_description', '')
         
-        # Base prompt
+        tone = applied_recommendations.get('tone_of_voice', 'professional')
+        tagline = applied_recommendations.get('tagline', '')
+        logo_style = applied_recommendations.get('logo_style', 'modern')
+        color_scheme = applied_recommendations.get('color_scheme', 'professional colors')
+        font_style = applied_recommendations.get('font', 'clean')
+        
         prompt = f"""
-        Create a modern, professional, and distinctive logo for "{business_name}" in the {industry} industry.
+        Create a professional logo for "{business_name}" in the {industry} industry.
         
         Business Context:
         - Description: {description}
-        - Values: {values}
-        - Unique Selling Point: {unique_selling_point}
+        - Tone of Voice: {tone}
+        - Tagline: {tagline}
+        
+        Design Requirements:
+        - Style: {logo_style}
+        - Colors: {color_scheme}
+        - Typography: {font_style}
+        - Professional, scalable, and memorable
+        - Suitable for digital and print use
         """
         
-        # Enhanced prompt with recommendations if available
-        if recommendations:
-            prompt += f"""
-            
-            Strategic Branding Insights:
-            Based on comprehensive market analysis and competitor research, incorporate these strategic elements:
-            
-            {recommendations[:1000]}  # Limit to avoid token limits
-            
-            Logo Design Requirements:
-            - Reflect the strategic positioning identified in the analysis
-            - Differentiate from competitors while staying industry-appropriate
-            - Embody the recommended brand personality and values
-            - Support the suggested marketing strategy and target audience
-            - Align with recommended brand enhancement strategies
-            """
+        # Note: This would typically use DALL-E API, but for demonstration
+        # In a real implementation, you'd use:
+        # from openai import OpenAI
+        # client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+        # response = client.images.generate(model="dall-e-3", prompt=prompt, size="1024x1024")
+        # return response.data[0].url
         
-        prompt += f"""
+        # For demonstration, return a placeholder
+        st.info("Logo generation would use DALL-E API here")
+        return "https://via.placeholder.com/400x300/4CAF50/FFFFFF?text=Claude+Uplift+Logo"
         
-        Technical Specifications:
-        - Modern, clean, and professional aesthetic
-        - Scalable vector-style design that works at any size
-        - Memorable and distinctive while remaining timeless
-        - Suitable for digital and print applications
-        - Colors should be strategic and industry-appropriate
-        - Must stand out in the {industry} market landscape
-        - Should convey trust, professionalism, and the unique value proposition
-        
-        Style: Contemporary, sophisticated, and market-conscious design that reflects strategic brand positioning.
-        """
-        
-        response = openai.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
-        )
-        
-        return response.data[0].url
     except Exception as e:
         st.error(f"Error generating logo: {str(e)}")
         return None
 
 # =============================================================================
-# LEGACY FUNCTIONS (from original utils.py)
+# COMPETITOR ANALYSIS
 # =============================================================================
 
-def get_tone_select_box():
-    """Get tone selection for tagline generation"""
-    return st.selectbox(
-        "Please select the tone of your tagline", 
-        [
-            "Professional", "Funny", "Inspiring", "Motivational", 
-            "Educational", "Engaging", "Entertaining", "Informative", 
-            "Persuasive", "Creative", "Unique", "Catchy", "Memorable"
-        ]
-    )
-
-def generate_tagline(business_info):
-    """Generate tagline and branding recommendations"""
-    prompt = f"""
-    You are a creative branding strategist, specializing in helping small businesses establish a strong and memorable brand identity. When given information about a business's values, target audience, business unique selling point and industry, you generate branding ideas that include logo concepts, color palettes, tone of voice, a one line tagline, and marketing strategies. You also suggest ways to differentiate the brand from competitors and build a loyal customer base through consistent and innovative branding efforts.
-
-    Business Name: {business_info.get("business_name", "")}
-    Business Description: {business_info.get("business_description", "")}
-    Business Industry: {business_info.get("business_industry", "")}
-    Business Unique Selling Point: {business_info.get("business_unique_selling_point", "")}
-    Business Target Audience: {business_info.get("business_target_audience", "")}
-    Business Values: {business_info.get("business_values", "")}
-
-    Be concise and to the point, and give me all the fields under headings using ### format.
-    """
-
+def search_competitors(business_data, tavily_client):
+    """Search for competitors using business information"""
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        st.error(f"Error generating tagline: {str(e)}")
-        return "Unable to generate tagline at this time."
-
-def separating_answer(text):
-    """Parse AI response into structured sections"""
-    # Split by ### and filter empty sections
-    sections = [section.strip() for section in text.split('###') if section.strip()]
-
-    # Convert to dictionary with lists
-    result = {}
-    for section in sections:
-        lines = section.split('\n', 1)
-        title = lines[0].strip()
-        content = lines[1].strip() if len(lines) > 1 else ""
+        business_name = business_data.get('business_name', '')
+        industry = business_data.get('business_industry', '')
         
-        # Convert bullet points to list
-        if content.startswith('-'):
-            # Split by lines starting with -
-            bullet_items = re.findall(r'^- (.+)$', content, re.MULTILINE)
-            result[title] = bullet_items
-        else:
-            result[title] = content
+        # Search queries
+        queries = [
+            f"companies in {industry} industry",
+            f"competitors of {business_name}",
+            f"{industry} businesses similar to {business_name}"
+        ]
+        
+        competitors = []
+        
+        for query in queries:
+            try:
+                results = tavily_client.search(query, max_results=3)
+                
+                for result in results.get('results', []):
+                    title = result.get('title', '')
+                    url = result.get('url', '')
+                    content = result.get('content', '')
+                    
+                    # Extract potential business names from title and content
+                    potential_names = extract_business_names(title, content)
+                    
+                    for name in potential_names:
+                        if name.lower() != business_name.lower():  # Don't include self
+                            competitors.append({
+                                'name': name,
+                                'website': url,
+                                'industry': industry,
+                                'description': content[:200] + '...' if len(content) > 200 else content
+                            })
+            except Exception as e:
+                st.warning(f"Error in search query '{query}': {str(e)}")
+                continue
+        
+        # Remove duplicates
+        unique_competitors = []
+        seen_names = set()
+        
+        for comp in competitors:
+            if comp['name'].lower() not in seen_names:
+                seen_names.add(comp['name'].lower())
+                unique_competitors.append(comp)
+        
+        return unique_competitors[:10]  # Limit to top 10
+        
+    except Exception as e:
+        st.error(f"Error searching competitors: {str(e)}")
+        return []
 
-    return result
-
-def display_recommendations(recommendations):
-    """Display recommendations in a structured format"""
-    st.title("💡 Tips and Recommendations")
-
-    for category, items in recommendations.items():
-        with st.container():
-            st.subheader(category)
-            
-            if isinstance(items, list):
-                for item in items:
-                    st.markdown(f"• {item}")
-            else:
-                st.markdown(items)
-            
-            st.divider()
-
-def format_business_summary(business_data):
-    """Format business data for display"""
-    summary = ""
-    for key, value in business_data.items():
-        if value and value != "Not clearly specified on website":
-            display_key = key.replace('_', ' ').title()
-            summary += f"**{display_key}:** {value}\n\n"
-    return summary
-
-def validate_url(url):
-    """Basic URL validation"""
-    import re
-    url_pattern = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    return url_pattern.match(url) is not None
-
-# =============================================================================
-# SESSION STATE MANAGEMENT
-# =============================================================================
-
-def initialize_session_state():
-    """Initialize all session state variables"""
-    if 'business_data' not in st.session_state:
-        st.session_state.business_data = {}
-    if 'competitor_data' not in st.session_state:
-        st.session_state.competitor_data = []
-    if 'recommendations' not in st.session_state:
-        st.session_state.recommendations = None
-    if 'logo_url' not in st.session_state:
-        st.session_state.logo_url = None
+def extract_business_names(title, content):
+    """Extract potential business names from title and content"""
+    names = []
+    
+    # Extract from title
+    if title:
+        # Remove common words and patterns
+        title_clean = re.sub(r'\b(Inc|LLC|Corp|Company|Ltd|Limited)\b', '', title, flags=re.IGNORECASE)
+        title_clean = re.sub(r'[^\w\s]', ' ', title_clean)
+        
+        # Split and take meaningful parts
+        words = title_clean.split()
+        if len(words) >= 1:
+            # Take first 1-3 words as potential company name
+            for i in range(1, min(4, len(words) + 1)):
+                potential_name = ' '.join(words[:i]).strip()
+                if len(potential_name) > 2 and potential_name.lower() not in ['the', 'and', 'or']:
+                    names.append(potential_name)
+    
+    # Extract from content using patterns
+    if content:
+        # Look for patterns like "CompanyName is" or "CompanyName provides"
+        patterns = [
+            r'([A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*){0,2})\s+(?:is|provides|offers|specializes)',
+            r'([A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*){0,2})\s+(?:Inc|LLC|Corp|Company|Ltd)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, content)
+            for match in matches:
+                if len(match) > 2:
+                    names.append(match.strip())
+    
+    return list(set(names))  # Remove duplicates
 
 # =============================================================================
 # UI HELPER FUNCTIONS
 # =============================================================================
 
 def display_business_summary():
-    """Display current business data if available"""
-    if st.session_state.business_data:
-        st.divider()
+    """Display current business information"""
+    if any(st.session_state.business_data.values()):
         st.subheader("📄 Current Business Information")
         
-        for key, value in st.session_state.business_data.items():
-            if value and value != "Not clearly specified on website":
+        data = st.session_state.business_data
+        if data['business_name']:
+            st.write(f"**Business Name:** {data['business_name']}")
+        if data['business_description']:
+            st.write(f"**Description:** {data['business_description']}")
+        if data['business_website']:
+            st.write(f"**Website:** {data['business_website']}")
+        if data['business_industry']:
+            st.write(f"**Industry:** {data['business_industry']}")
+
+def display_applied_recommendations():
+    """Display currently applied recommendations"""
+    applied = st.session_state.applied_recommendations
+    if any(applied.values()):
+        st.subheader("✅ Applied Recommendations")
+        for key, value in applied.items():
+            if value:
                 display_key = key.replace('_', ' ').title()
                 st.write(f"**{display_key}:** {value}")
 
-def display_competitor_results():
-    """Display competitor analysis results"""
-    if st.session_state.competitor_data:
-        st.subheader("📊 Competitor Analysis Results")
-        
-        for i, competitor in enumerate(st.session_state.competitor_data, 1):
-            with st.expander(f"🏢 {competitor['name']}", expanded=False):
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.write(f"**Description:** {competitor['description']}")
-                    if competitor['url']:
-                        st.write(f"**Website:** [Visit Website]({competitor['url']})")
-                
-                with col2:
-                    st.badge(competitor['search_type'])
-
-def display_logo_generation_info():
-    """Display logo generation mode information"""
-    recommendations_available = bool(st.session_state.get('recommendations'))
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if recommendations_available:
-            st.success("🎯 **Strategic Mode**: Using competitor analysis & recommendations")
-        else:
-            st.warning("⚡ **Basic Mode**: No competitor analysis available")
-    
-    with col2:
-        if not recommendations_available:
-            st.markdown("💡 *Complete competitor analysis for strategic logo design*")
-        else:
-            st.markdown("✨ *Logo will reflect market positioning & brand strategy*")
-    
-    # Explanation of logo generation modes
-    with st.expander("📚 How Logo Generation Works", expanded=False):
-        st.markdown("""
-        **🎯 Strategic Mode** (With Competitor Analysis):
-        - Uses comprehensive market research and recommendations from Tab 2
-        - Creates logos that differentiate from competitors
-        - Reflects strategic brand positioning and market insights
-        - Incorporates target audience preferences and competitive landscape
-        - Results in more strategic and market-conscious design
-        
-        **⚡ Basic Mode** (Without Competitor Analysis):
-        - Uses only your business information from Tab 1
-        - Creates professional logos based on industry and values
-        - Good starting point, but less strategic
-        
-        💡 **Pro Tip**: Complete the competitor analysis in Tab 2 first for strategically-informed, market-aware logo design that stands out from competitors!
-        """)
-
-def display_generated_logo():
-    """Display the generated logo if available"""
-    if st.session_state.logo_url:
-        st.divider()
-        st.subheader("🖼️ Your Generated Logo")
-        
-        business_name = st.session_state.business_data.get('business_name', 'Your Business')
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.image(st.session_state.logo_url, caption=f"Logo for {business_name}", use_column_width=True)
-        
-        # Download option
-        st.markdown("💡 **Tip:** Right-click on the logo image and select 'Save image as...' to download it.")
+def validate_url(url):
+    """Basic URL validation"""
+    import re
+    url_pattern = re.compile(
+        r'^https?://'
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
+        r'localhost|'
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+        r'(?::\d+)?'
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    return url_pattern.match(url) is not None
