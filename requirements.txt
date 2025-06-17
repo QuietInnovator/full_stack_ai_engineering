@@ -1,7 +1,16 @@
-streamlit
-openai
-requests
-beautifulsoup4
-tavily-python
-Pillow
-reportlab
+# Compatible versions for Cloud Run deployment
+streamlit==1.35.0
+openai==1.35.3
+requests==2.31.0
+beautifulsoup4==4.12.2
+tavily-python==0.3.3
+Pillow==10.3.0
+reportlab==4.2.0
+
+# Fixed langchain versions for compatibility
+langchain==0.2.5
+langchain-openai==0.1.8
+langchain-core==0.2.5
+
+# Additional dependencies
+gunicorn==22.0.0
